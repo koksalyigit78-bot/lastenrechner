@@ -6,128 +6,173 @@ st.set_page_config(page_title="Levelup Training - Profi Rechner", page_icon="�
 st.title("🏗️ Levelup Anschlag-Profi")
 st.markdown("Berechnung nach **DGUV Information 209-021**")
 
-# --- TAB-STRUKTUR ---
-tab1, tab2 = st.tabs(["📦 Was kann ich heben?", "🔗 Welches Mittel brauche ich?"])
+# --- DATENBANKEN FÜR STANDARD-GRÖSSEN ---
+# Hier hinterlegen wir echte Marktstandards, um Empfehlungen zu geben
+standard_rundschlingen = {
+    1000: "1000 kg (Violett)",
+    2000: "2000 kg (Grün)",
+    3000: "3000 kg (Gelb)",
+    4000: "4000 kg (Grau)",
+    5000: "5000 kg (Rot)",
+    6000: "6000 kg (Braun)",
+    8000: "8000 kg (Blau)",
+    10000: "10000 kg (Orange)"
+}
 
-# --- HILFSFUNKTION: Lastfaktor (M) ---
-def get_geometry_factor(anzahl_effektive_straenge, winkel_str, symmetrisch):
-    # 1. Sicherheits-Check: Winkel > 60°
-    if winkel_str == "> 60° (Verboten!)":
-        return 0
+standard_kette_gk8 = {
+    1120: "6 mm (1.12 t)",
+    1500: "7 mm (1.5 t)",
+    2000: "8 mm (2.0 t)",
+    3150: "10 mm (3.15 t)",
+    5300: "13 mm (5.3 t)",
+    8000: "16 mm (8.0 t)",
+    11200: "18 mm (11.2 t)",
+    15000: "20 mm (15.0 t)"
+}
+
+material_liste = [
+    "Rundschlingen (Chemiefaser)",
+    "Rundstahlkette Güteklasse 8",
+    "Rundstahlkette Güteklasse 10",
+    "Rundstahlkette Güteklasse 4",
+    "Rundstahlkette Güteklasse 2",
+    "Endlose Chemiefaserhebebänder",
+    "Litzenseile",
+    "Naturfaserseile",
+    "Kabelschlagseil-Grummets"
+]
+
+# --- HILFSFUNKTIONEN ---
+
+def get_geometry_factor(effektive_straenge, winkel_str, symmetrisch):
+    if winkel_str == "> 60° (Verboten!)": return 0
     
-    # 2. Asymmetrie-Check (DGUV Regel)
+    # Unsymmetrie-Regel
     if not symmetrisch:
-        # Bei Unsymmetrie wird die Last rechnerisch nur von weniger Strängen getragen
-        if anzahl_effektive_straenge <= 2:
-            return 1.0 # Rechnet wie 1 Strang
-        else:
-            # Bei 3/4 Strängen unsymmetrisch -> Rechnet wie 2 Stränge
-            # Wir nehmen den Faktor für 2 Stränge im entsprechenden Winkel
-            basis_faktoren_2strang = {"0° (Vertikal)": 2.0, "0° - 45°": 1.4, "45° - 60°": 1.0}
-            return basis_faktoren_2strang[winkel_str]
+        if effektive_straenge <= 2: return 1.0 
+        # Bei 3/4 Strängen unsymmetrisch -> Rechnet wie 2 Stränge
+        basis_faktoren_2strang = {"0° (Vertikal)": 2.0, "0° - 45°": 1.4, "45° - 60°": 1.0}
+        return basis_faktoren_2strang[winkel_str]
 
-    # 3. Normale Tabelle (Symmetrisch)
-    # Hinweis: Falls durch Hängegang mehr als 4 Stränge entstehen,
-    # bleibt der Faktor in der Regel bei max 4 tragenden Elementen oder muss gesondert betrachtet werden.
-    # Für diese App begrenzen wir die Logik auf die Standard-Faktoren bis 4 Stränge,
-    # da darüber hinaus oft Sonderberechnungen (Traversen) nötig sind.
-    
+    # Symmetrisch
     faktoren_tabelle = {
         1: {"0° (Vertikal)": 1.0, "0° - 45°": 1.0, "45° - 60°": 1.0},
         2: {"0° (Vertikal)": 2.0, "0° - 45°": 1.4, "45° - 60°": 1.0},
         3: {"0° (Vertikal)": 3.0, "0° - 45°": 2.1, "45° - 60°": 1.5},
         4: {"0° (Vertikal)": 4.0, "0° - 45°": 2.1, "45° - 60°": 1.5}
     }
-    
-    # Fallback: Wenn > 4 Stränge (z.B. 4 Punkte im Hängegang = 8 Stränge), 
-    # rechnet man sicherheitshalber oft nicht höher als mit Faktor für 4.
-    safe_strang_count = min(anzahl_effektive_straenge, 4)
-    
-    return faktoren_tabelle[safe_strang_count][winkel_str]
+    # Sicherung für > 4 Stränge (Hängegang)
+    safe_count = min(effektive_straenge, 4)
+    return faktoren_tabelle[safe_count][winkel_str]
 
+def finde_naechste_groesse(benoetigte_wll, material):
+    # Diese Funktion sucht die passende Handelsgröße
+    vorschlag = None
+    
+    if "Rundschlingen" in material or "Chemiefaserhebebänder" in material:
+        for wll, name in standard_rundschlingen.items():
+            if wll >= benoetigte_wll:
+                vorschlag = name
+                break
+                
+    elif "Güteklasse 8" in material:
+        for wll, name in standard_kette_gk8.items():
+            if wll >= benoetigte_wll:
+                vorschlag = name
+                break
+    
+    return vorschlag
 
-# --- MODUS 1: VORHANDENES MITTEL PRÜFEN ---
+# --- UI START ---
+tab1, tab2 = st.tabs(["📦 Last berechnen (Ich habe Material)", "🔗 Material finden (Ich habe eine Last)"])
+
+# ==========================================
+# TAB 1: WAS KANN ICH HEBEN?
+# ==========================================
 with tab1:
-    st.header("Maximale Last berechnen")
+    st.header("Vorhandenes Anschlagmittel prüfen")
     
+    # Materialauswahl
+    t1_mat = st.selectbox("Welches Anschlagmittel nutzt du?", material_liste, key="t1_mat")
+
     col_a1, col_a2 = st.columns(2)
     with col_a1:
-        t1_wll_strang = st.number_input("WLL Einzelstrang (kg)", value=1000, step=100, help="Tragfähigkeit laut Etikett für einen Strang")
-        t1_punkte = st.radio("Anzahl Anschlagpunkte an der Last", [1, 2, 3, 4], key="t1_p")
+        t1_wll_strang = st.number_input("WLL Einzelstrang (kg)", value=1000, step=100, help="Was steht auf dem Etikett/Anhänger?")
+        t1_punkte = st.radio("Anzahl Anschlagpunkte", [1, 2, 3, 4], key="t1_p")
     
     with col_a2:
         t1_art = st.selectbox("Anschlagart", ["Direkter Zug", "Geschnürt (Schnürgang)", "Umgelegt (Hängegang)"], key="t1_art")
         t1_winkel = st.selectbox("Neigungswinkel (β)", ["0° (Vertikal)", "0° - 45°", "45° - 60°", "> 60° (Verboten!)"], key="t1_w")
-        t1_sym = st.toggle("Last hängt symmetrisch?", value=True, key="t1_sym")
+        t1_sym = st.toggle("Symmetrische Last?", value=True, key="t1_sym")
 
-    # --- LOGIK FÜR ANSCHLAGART ---
-    art_faktor = 1.0
-    effektive_straenge = t1_punkte
-
-    if t1_art == "Geschnürt (Schnürgang)":
-        art_faktor = 0.8  # Reduzierung auf 80%
-        st.info("ℹ️ Schnürgang reduziert die Tragfähigkeit auf 80%.")
-        
-    elif t1_art == "Umgelegt (Hängegang)":
-        # Hängegang verdoppelt die Anzahl der Stränge zum Haken
-        effektive_straenge = t1_punkte * 2
-        st.info(f"ℹ️ Hängegang: Aus {t1_punkte} Anschlagpunkten werden rechnerisch {effektive_straenge} Stränge zum Haken.")
-
-    # Berechnung
+    # Logik
+    effektive_straenge = t1_punkte * 2 if t1_art == "Umgelegt (Hängegang)" else t1_punkte
+    art_faktor = 0.8 if t1_art == "Geschnürt (Schnürgang)" else 1.0
     geom_faktor = get_geometry_factor(effektive_straenge, t1_winkel, t1_sym)
-    
+
     st.divider()
-    
+
     if geom_faktor == 0:
-        st.error("STOPP! Neigungswinkel über 60° ist verboten.")
+        st.error("⛔ STOPP: Winkel > 60° ist verboten!")
     else:
-        # Formel: WLL * ArtFaktor * GeometrieFaktor
         max_last = t1_wll_strang * art_faktor * geom_faktor
-        
-        st.write(f"Geometrie-Faktor (für {effektive_straenge} Stränge): **{geom_faktor}**")
-        st.write(f"Faktor Anschlagart: **{art_faktor}**")
-        
+        st.write(f"Du nutzt: **{t1_mat}**")
         st.success(f"### Maximale Last: {int(max_last)} kg")
-        
-        if t1_art == "Umgelegt (Hängegang)":
-            st.warning("⚠️ Wichtig beim Hängegang: Achte darauf, dass die Anschlagmittel am Kranhaken nicht übereinander liegen (Quetschgefahr)!")
+        st.caption(f"Berechnungsfaktoren: Art {art_faktor} x Geometrie {geom_faktor} (M)")
 
 
-# --- MODUS 2: ANSCHLAGMITTEL FINDEN ---
+# ==========================================
+# TAB 2: WELCHES MITTEL BRAUCHE ICH?
+# ==========================================
 with tab2:
-    st.header("Welches Mittel brauche ich?")
+    st.header("Passendes Anschlagmittel finden")
     
+    # 1. Material wählen
+    st.info("Schritt 1: Was willst du benutzen?")
+    t2_mat = st.selectbox("Material auswählen:", material_liste, key="t2_mat")
+    
+    # 2. Lastdaten
+    st.info("Schritt 2: Wie schwer ist die Last & wie hängst du an?")
     col_b1, col_b2 = st.columns(2)
+    
     with col_b1:
-        t2_last = st.number_input("Gewicht der Last (kg)", value=2000, step=100)
-        t2_punkte = st.radio("Geplante Anschlagpunkte", [1, 2, 3, 4], key="t2_p")
+        t2_last = st.number_input("Gewicht der Last (kg)", value=2500, step=100)
+        t2_punkte = st.radio("Anzahl Anschlagpunkte", [1, 2, 3, 4], key="t2_p")
         
     with col_b2:
         t2_art = st.selectbox("Geplante Anschlagart", ["Direkter Zug", "Geschnürt (Schnürgang)", "Umgelegt (Hängegang)"], key="t2_art")
         t2_winkel = st.selectbox("Geplanter Winkel (β)", ["0° (Vertikal)", "0° - 45°", "45° - 60°", "> 60° (Verboten!)"], key="t2_w")
-        t2_sym = st.toggle("Last hängt symmetrisch?", value=True, key="t2_sym")
+        t2_sym = st.toggle("Symmetrische Last?", value=True, key="t2_sym")
 
-    # --- LOGIK RÜCKWÄRTS ---
-    art_faktor_req = 1.0
-    effektive_straenge_req = t2_punkte
-
-    if t2_art == "Geschnürt (Schnürgang)":
-        art_faktor_req = 0.8
-    elif t2_art == "Umgelegt (Hängegang)":
-        effektive_straenge_req = t2_punkte * 2
-
+    # Logik
+    effektive_straenge_req = t2_punkte * 2 if t2_art == "Umgelegt (Hängegang)" else t2_punkte
+    art_faktor_req = 0.8 if t2_art == "Geschnürt (Schnürgang)" else 1.0
     geom_faktor_req = get_geometry_factor(effektive_straenge_req, t2_winkel, t2_sym)
     
     st.divider()
     
     if geom_faktor_req == 0:
-        st.error("STOPP! Neigungswinkel über 60° ist verboten.")
+        st.error("⛔ STOPP: Winkel > 60° ist verboten!")
     else:
-        # Rückrechnung: WLL_erforderlich = Last / (ArtFaktor * GeometrieFaktor)
+        # Rückrechnung
         gesamt_faktor = art_faktor_req * geom_faktor_req
         benoetigte_wll = t2_last / gesamt_faktor
         
-        st.write(f"Gesamt-Berechnungsfaktor: **{round(gesamt_faktor, 2)}**")
-        st.warning(f"### Du benötigst Stränge mit mind:")
-        st.header(f"WLL {int(benoetigte_wll)} kg")
-        st.caption("Das ist die WLL, die auf dem Etikett des einzelnen Strangs stehen muss.")
+        st.subheader("Ergebnis:")
+        st.write(f"Gesamt-Lastfaktor (M): **{round(gesamt_faktor, 2)}**")
+        
+        # Das wichtige Ergebnis: Was muss auf dem Etikett stehen?
+        st.warning(f"Jeder einzelne Strang/Gurt muss eine WLL haben von mindestens:")
+        st.title(f"{int(benoetigte_wll)} kg")
+        
+        # Intelligenter Vorschlag (Levelup Training Feature)
+        vorschlag = finde_naechste_groesse(benoetigte_wll, t2_mat)
+        
+        if vorschlag:
+            st.success(f"✅ **Levelup Empfehlung:** Nimm {t2_mat} der Größe:\n# {vorschlag}")
+        else:
+            st.info(f"Bitte prüfe die Traglasttabelle für {t2_mat}, ob eine Größe verfügbar ist, die > {int(benoetigte_wll)} kg trägt.")
+
+# --- FOOTER ---
+st.divider()
+st.caption("Levelup Training App | Angaben gemäß DGUV Information 209-021 | Alle Werte ohne Gewähr.")
